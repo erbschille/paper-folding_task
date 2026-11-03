@@ -138,9 +138,22 @@ let timerSec = 180, timerInt = null;
 let allData = [];
 let resizeObs = null;
 
+/* ── Qualtrics / embedding config ─────────────────
+   When this task is embedded in Qualtrics (in an iframe), Qualtrics can
+   pass the participant ID in via the URL, e.g.
+     paper_folding_task.html?pid=K7M2QX&session=1&embedded=1
+   - pid:      participant identifier (skips the manual entry screen)
+   - embedded: if "1", results are posted to the parent window via
+               postMessage instead of relying only on the CSV download. */
+const urlParams = new URLSearchParams(window.location.search);
+const URL_PID   = (urlParams.get('pid') || '').trim();
+const EMBEDDED  = urlParams.get('embedded') === '1';
+const SESSION   = (urlParams.get('session') || '').trim();   // 1 = pre-training, 2 = post-training
+
 const main    = document.getElementById('main');
 const content = document.getElementById('content');
 const timerBar= document.getElementById('timer-bar');
+
 
 /* ── Helpers ─────────────────────────────────── */
 function $(id){ return document.getElementById(id); }
@@ -370,6 +383,7 @@ function endPart(manual){
     const corr = ANSWERS[n];
     allData.push({
       participant_id: pid,
+      session:        SESSION,
       session_start:  sessionStart,
       part:           curPart,
       item_num:       n,
@@ -419,6 +433,33 @@ function showEndScreen(){
   const tC = s1.c+s2.c, tW = s1.w+s2.w, tSk = s1.sk+s2.sk;
   const tR = (tC - tW/4).toFixed(2);
 
+  // Compact results sent to Qualtrics (each key becomes one column, prefixed pf_).
+  // "responses" = the 20 answers as one string, in item order ("-" = no answer).
+  const responses20 = Array.from({length:20}, (_, i) =>
+    (allData.find(r => r.item_num === i + 1) || {}).response || '-').join('');
+  const summary = {
+    responses:  responses20,
+    correct:    tC,
+    wrong:      tW,
+    skipped:    tSk,
+    raw:        Number(tR),
+    p1_correct: s1.c,
+    p2_correct: s2.c,
+    p1_raw:     Number(s1.raw),
+    p2_raw:     Number(s2.raw),
+  };
+
+  // Embedded in Qualtrics: send the data and hand control back. No results screen.
+  if (EMBEDDED) {
+    postToParent(summary);
+    content.innerHTML = '<div class="end-wrap"><p style="color:#888;font-size:15px">Saving your responses&hellip;</p></div>';
+    return;
+  }
+
+  const downloadedMsg = EMBEDDED
+    ? 'Your responses have been recorded.'
+    : 'Your data has been downloaded automatically.';
+
   content.innerHTML = `
   <div class="end-wrap">
     <h2>Test Complete</h2>
@@ -438,13 +479,23 @@ function showEndScreen(){
     </div>
     <p style="color:#888;font-size:14px;margin-bottom:20px">
       Score = correct &minus; (wrong &divide; 4). Maximum = 20.<br>
-      Your data has been downloaded automatically.
+      ${downloadedMsg}
     </p>
-    <button class="btn" onclick="downloadCSV()">Download Data Again (CSV)</button>
+    ${EMBEDDED ? '' : '<button class="btn" onclick="downloadCSV()">Download Data Again (CSV)</button>'}
   </div>`;
 
-  // Automatically download the data once the screen is shown.
-  setTimeout(downloadCSV, 200);
+  // When not embedded, auto-download as a local backup.
+  if(!EMBEDDED) setTimeout(downloadCSV, 200);
+}
+
+/* Send results to the Qualtrics page that is hosting this task.
+   Message format is shared by every task: {type, task, data}.
+   Contains only scores/answers (no name, no ID), so '*' is safe here. */
+let _sent = false;
+function postToParent(data){
+  if(_sent || window.parent === window) return;
+  _sent = true;
+  window.parent.postMessage({ type: 'task_complete', task: 'paperfolding', data: data }, '*');
 }
 
 function downloadCSV(){
@@ -481,6 +532,14 @@ const launch = () => {
 startBtn.addEventListener('click', launch);
 pidInput.addEventListener('keydown', e => { if(e.key === 'Enter') launch(); });
 pidInput.addEventListener('input',   () => pidInput.classList.remove('error'));
+
+/* If a participant ID was supplied via the URL (e.g. from Qualtrics),
+   pre-fill it and start automatically, skipping the manual entry screen. */
+if(URL_PID || EMBEDDED){          // inside Qualtrics: never show the manual ID screen
+  pidInput.value = URL_PID || 'unknown';
+  launch();
+}
+
 </script>
 </body>
 </html>
