@@ -124,11 +124,9 @@ const P2_SRC = 'data:image/png;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/4gHYSUNDX1BST0
 /* ── Answer key ─────────────────────────────── */
 const ANSWERS = {"1": "A", "2": "D", "3": "B", "4": "D", "5": "B", "6": "E", "7": "A", "8": "C", "9": "E", "10": "E", "11": "C", "12": "B", "13": "A", "14": "E", "15": "B", "16": "A", "17": "E", "18": "D", "19": "D", "20": "C"};
 
-/* ── Click-detection grids ───────────────────
+/* ── Click-detection grids: see "Answer squares" below ──
    s/e = fractional start/end of each column or row
    (measured from pixel analysis of the actual images)  */
-const P1_LAYOUT = {"cols": [{"s": 0.484, "e": 0.590}, {"s": 0.590, "e": 0.669}, {"s": 0.669, "e": 0.750}, {"s": 0.750, "e": 0.830}, {"s": 0.830, "e": 0.915}], "rows": [{"s": 0.100, "e": 0.188}, {"s": 0.188, "e": 0.275}, {"s": 0.275, "e": 0.363}, {"s": 0.363, "e": 0.446}, {"s": 0.446, "e": 0.538}, {"s": 0.538, "e": 0.626}, {"s": 0.626, "e": 0.713}, {"s": 0.713, "e": 0.801}, {"s": 0.801, "e": 0.889}, {"s": 0.889, "e": 0.980}]};
-const P2_LAYOUT = {"cols": [{"s": 0.497, "e": 0.596}, {"s": 0.596, "e": 0.680}, {"s": 0.680, "e": 0.761}, {"s": 0.761, "e": 0.840}, {"s": 0.840, "e": 0.920}], "rows": [{"s": 0.110, "e": 0.201}, {"s": 0.201, "e": 0.288}, {"s": 0.288, "e": 0.374}, {"s": 0.374, "e": 0.461}, {"s": 0.461, "e": 0.548}, {"s": 0.548, "e": 0.635}, {"s": 0.635, "e": 0.721}, {"s": 0.721, "e": 0.808}, {"s": 0.808, "e": 0.895}, {"s": 0.895, "e": 0.981}]};
 
 /* ── State ───────────────────────────────────── */
 let pid = '', sessionStart = '';
@@ -179,6 +177,35 @@ function updateTimerDisplay(){
   el.className = timerSec <= 30 ? 'urgent' : timerSec <= 60 ? 'warn' : '';
 }
 
+/* ── Answer squares ───────────────────────────
+   Exact position of every answer square in each test image, measured from
+   the images' pixels (fractions of image width / height).
+   cols = [left, right] of squares A–E; rows = [top, bottom] of items 1–10. */
+const P1_SQUARES = {
+  cols: [[0.5179,0.5787],[0.5984,0.6592],[0.6789,0.7397],[0.7598,0.8202],[0.8399,0.9007]],
+  rows: [[0.1399,0.1879],[0.2274,0.2755],[0.3149,0.3630],[0.4026,0.4507],[0.4903,0.5381],
+         [0.5778,0.6259],[0.6654,0.7133],[0.7529,0.8009],[0.8404,0.8885],[0.9282,0.9760]]
+};
+const P2_SQUARES = {
+  cols: [[0.5314,0.5912],[0.6108,0.6705],[0.6904,0.7500],[0.7703,0.8304],[0.8498,0.9092]],
+  rows: [[0.1537,0.2012],[0.2404,0.2881],[0.3273,0.3747],[0.4139,0.4614],[0.5005,0.5481],
+         [0.5873,0.6350],[0.6740,0.7214],[0.7608,0.8083],[0.8476,0.8949],[0.9341,0.9818]]
+};
+// Space between the square and the edge of the blue selection box (fraction of square size).
+const BOX_PAD = 0.17;
+
+// Click zones: each square's zone reaches halfway to its neighbours.
+function clickZones(spans){
+  return spans.map(([a, b], i) => {
+    const prev = spans[i-1], next = spans[i+1];
+    const gapBefore = prev ? a - prev[1] : (next ? next[0] - b : 0);
+    const gapAfter  = next ? next[0] - b : gapBefore;
+    return { s: a - gapBefore/2, e: b + gapAfter/2 };
+  });
+}
+const P1_LAYOUT = { cols: clickZones(P1_SQUARES.cols), rows: clickZones(P1_SQUARES.rows) };
+const P2_LAYOUT = { cols: clickZones(P2_SQUARES.cols), rows: clickZones(P2_SQUARES.rows) };
+
 /* ── Canvas overlay ──────────────────────────── */
 function redrawSelections(){
   const canvas = $('overlay');
@@ -192,7 +219,7 @@ function redrawSelections(){
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const layout    = curPart === 1 ? P1_LAYOUT : P2_LAYOUT;
+  const squares   = curPart === 1 ? P1_SQUARES : P2_SQUARES;
   const itemStart = curPart === 1 ? 1 : 11;
 
   for(const [key, ch] of Object.entries(responses)){
@@ -201,48 +228,31 @@ function redrawSelections(){
     const colIdx = 'ABCDE'.indexOf(ch);
     if(rowIdx < 0 || rowIdx >= 10 || colIdx < 0) continue;
 
-    const row = layout.rows[rowIdx];
-    const col = layout.cols[colIdx];
-    const cw = canvas.width, ch2 = canvas.height;
+    const cw = canvas.width, chh = canvas.height;
+    const [l, r] = squares.cols[colIdx];
+    const [t, b] = squares.rows[rowIdx];
 
-    const x = col.s * cw;
-    const w = (col.e - col.s) * cw;
-    const fullY = row.s * ch2;
-    const fullH = (row.e - row.s) * ch2;
-
-    // Centre of the true cell (X tracks this)
-    const cx = x + w/2, cy = fullY + fullH/2;
-
-    // Uniform box width (fraction of image width), so every column —
-    // including the wider option A — renders the same size.
-    const BOX_W = 0.075;
-    const bw = BOX_W * cw;
-    const bx = cx - bw/2;
-
-    // Shrink the box vertically so it doesn't extend above where it should.
-    // BOX_VSCALE < 1 makes the box shorter; it stays re-centred on the cell.
-    // BOX_VSHIFT > 0 nudges the box down (fraction of cell height).
-    const BOX_VSCALE = 0.72;
-    const BOX_VSHIFT = 0.13;
-    const h = fullH * BOX_VSCALE;
-    const y = cy - h/2 + fullH * BOX_VSHIFT;
+    // The answer square, in canvas pixels, then grown evenly on all sides.
+    const sx = l * cw, sy = t * chh, sw = (r - l) * cw, sh = (b - t) * chh;
+    const pad = BOX_PAD * Math.max(sw, sh);
+    const bx = sx - pad, by = sy - pad, bw = sw + 2*pad, bh = sh + 2*pad;
+    const cx = sx + sw/2, cy = sy + sh/2;   // X sits on the centre of the square
 
     // Semi-transparent blue highlight
     ctx.fillStyle = 'rgba(58,123,213,0.18)';
-    ctx.fillRect(bx, y, bw, h);
+    ctx.fillRect(bx, by, bw, bh);
 
     // Blue border
     ctx.strokeStyle = '#3a7bd5';
     ctx.lineWidth = 2.5;
-    ctx.strokeRect(bx+1, y+1, bw-2, h-2);
-    const arm = Math.min(bw, h) * 0.28;
-    const xcy = y + h/2;   // X centred inside the (nudged) box
+    ctx.strokeRect(bx+1, by+1, bw-2, bh-2);
+    const arm = Math.min(bw, bh) * 0.28;
     ctx.strokeStyle = '#1a5bbf';
     ctx.lineWidth = 2.5;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(cx-arm, xcy-arm); ctx.lineTo(cx+arm, xcy+arm);
-    ctx.moveTo(cx+arm, xcy-arm); ctx.lineTo(cx-arm, xcy+arm);
+    ctx.moveTo(cx-arm, cy-arm); ctx.lineTo(cx+arm, cy+arm);
+    ctx.moveTo(cx+arm, cy-arm); ctx.lineTo(cx-arm, cy+arm);
     ctx.stroke();
   }
 
@@ -286,31 +296,134 @@ function handleCanvasClick(e){
 }
 
 /* ── Screens ─────────────────────────────────── */
+/* Instructions are shown as four pages:
+   1. What the test is   2. Sample problem (participant picks an answer)
+   3. Feedback + explanation   4. Remaining rules, then Begin Part One */
+
+// Click zones for answers A–E in the sample image (fractions of image width/height).
+const SAMPLE_LAYOUT = {
+  cols: [{s:0.366,e:0.477},{s:0.477,e:0.602},{s:0.602,e:0.726},{s:0.726,e:0.852},{s:0.852,e:0.970}],
+  row:  {s:0.17, e:0.83},
+  box:  {top:0.43, bottom:0.76}      // where the answer squares sit, for drawing the selection
+};
+const SAMPLE_ANSWER = 'C';
+let sampleChoice = null;
+
 function showInstructions(){
   timerBar.style.display = 'none';
+  showInstPage1();
+}
+
+function showInstPage1(){
   content.innerHTML = `
   <div class="inst-wrap">
-    <p>In this test you are to imagine the folding and unfolding of pieces of paper.
-       In each problem in the test there are some figures drawn at the left of a vertical
+    <p>In this test you are to imagine the folding and unfolding of pieces of paper.</p>
+
+    <p>In each problem in the test there are some figures drawn at the left of a vertical
        line and there are others drawn at the right of the line. The figures at the left
        represent a square piece of paper being folded, and the last of these figures has
        one or two small circles drawn on it to show where the paper has been punched.
-       Each hole is punched through all the thicknesses of paper at that point. One of the
-       five figures on the right of the vertical line shows where the holes will be when
-       the paper is completely unfolded. You are to decide which one of these figures is
-       correct and draw an X through that figure.</p>
+       Each hole is punched through all the thicknesses of paper at that point.</p>
 
+    <p>One of the five figures on the right of the vertical line shows where the holes will
+       be when the paper is completely unfolded. You are to decide which one of these figures
+       is correct and select that figure.</p>
+
+    <div class="begin-row">
+      <button class="btn" onclick="showInstPage2()">Next &rarr;</button>
+    </div>
+  </div>`;
+  window.scrollTo(0, 0);
+}
+
+function showInstPage2(){
+  sampleChoice = null;
+  content.innerHTML = `
+  <div class="inst-wrap">
     <p>Now try the sample problem below. (In this problem only one hole was punched in
-       the folded paper).</p>
+       the folded paper.)</p>
 
-    <img class="sample-img" src="${SAMPLE_Q_SRC}" alt="Sample problem">
+    <div id="sample-container" style="position:relative;margin:28px auto;max-width:100%;user-select:none">
+      <img id="sample-img" src="${SAMPLE_Q_SRC}" alt="Sample problem" style="display:block;width:100%;height:auto">
+      <canvas id="sample-overlay" style="position:absolute;top:0;left:0;width:100%;height:100%;cursor:pointer"></canvas>
+    </div>
+    <p id="click-hint" style="text-align:center">Click an answer figure (A–E) to select it.</p>
 
-    <p>The correct answer to the sample problem above is C and so it should have been
-       marked with an X. The figures below show how the paper was folded and why C is
-       the correct answer.</p>
+    <div class="begin-row">
+      <button class="btn" id="sample-check" onclick="showInstPage3()" disabled
+              style="opacity:.4;cursor:default">Check my answer &rarr;</button>
+    </div>
+  </div>`;
+  window.scrollTo(0, 0);
+
+  const canvas = $('sample-overlay');
+  const img = $('sample-img');
+  canvas.addEventListener('click', e => {
+    const r = canvas.getBoundingClientRect();
+    const fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height;
+    if(fy < SAMPLE_LAYOUT.row.s || fy > SAMPLE_LAYOUT.row.e) return;
+    const i = SAMPLE_LAYOUT.cols.findIndex(c => fx >= c.s && fx < c.e);
+    if(i < 0) return;
+    sampleChoice = 'ABCDE'[i];
+    const btn = $('sample-check');
+    btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = '';
+    drawSampleSelection();
+  });
+  if(img.complete){ drawSampleSelection(); } else { img.onload = drawSampleSelection; }
+  window.onresize = drawSampleSelection;
+}
+
+// Same blue box + X as the real test, so participants see how selecting works.
+function drawSampleSelection(){
+  const canvas = $('sample-overlay'), img = $('sample-img');
+  if(!canvas || !img) return;
+  canvas.width = img.offsetWidth; canvas.height = img.offsetHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if(!sampleChoice) return;
+  const col = SAMPLE_LAYOUT.cols['ABCDE'.indexOf(sampleChoice)];
+  const cw = canvas.width, chh = canvas.height;
+  const cx = (col.s + col.e) / 2 * cw;
+  const bw = 0.085 * cw;
+  const y = SAMPLE_LAYOUT.box.top * chh, h = (SAMPLE_LAYOUT.box.bottom - SAMPLE_LAYOUT.box.top) * chh;
+  const pad = 0.12 * h;
+  const bx = cx - bw/2, by = y - pad, bh = h + 2*pad;
+  ctx.fillStyle = 'rgba(58,123,213,0.18)';
+  ctx.fillRect(bx, by, bw, bh);
+  ctx.strokeStyle = '#3a7bd5'; ctx.lineWidth = 2.5;
+  ctx.strokeRect(bx+1, by+1, bw-2, bh-2);
+  const arm = Math.min(bw, bh) * 0.28, xcy = by + bh/2;
+  ctx.strokeStyle = '#1a5bbf'; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(cx-arm, xcy-arm); ctx.lineTo(cx+arm, xcy+arm);
+  ctx.moveTo(cx+arm, xcy-arm); ctx.lineTo(cx-arm, xcy+arm);
+  ctx.stroke();
+}
+
+function showInstPage3(){
+  if(!sampleChoice) return;
+  window.onresize = null;
+  const right = sampleChoice === SAMPLE_ANSWER;
+  content.innerHTML = `
+  <div class="inst-wrap">
+    <p style="font-size:20px;font-weight:700;color:${right ? '#2e8b57' : '#c0392b'}">
+       ${right ? 'That’s right!' : 'Not quite.'}</p>
+
+    <p>The correct answer to the sample problem was C. The figures below show how the
+       paper was folded and why C is the correct answer.</p>
 
     <img class="sample-img" src="${SAMPLE_A_SRC}" alt="Sample explanation">
 
+    <div class="begin-row">
+      <button class="btn" onclick="showInstPage4()">Next &rarr;</button>
+    </div>
+  </div>`;
+  window.scrollTo(0, 0);
+}
+
+function showInstPage4(){
+  content.innerHTML = `
+  <div class="inst-wrap">
     <p>In these problems all of the folds that are made are shown in the figures at the
        left of the line, and the paper is not turned or moved in any way except to make
        the folds shown in the figures. Remember, the answer is the figure that shows the
@@ -323,18 +436,26 @@ function showInstructions(){
        one page.</p>
 
     <div class="begin-row">
-      <button class="btn" onclick="startPart(1)">Begin Part One &rarr;</button>
+      <button class="btn" id="begin-btn">Begin Part One &rarr;</button>
     </div>
   </div>`;
+  window.scrollTo(0, 0);
+  onceSpaceOrClick($('begin-btn'), () => startPart(1));
+}
 
-  const h = e => {
-    if(e.code === 'Space'){
-      e.preventDefault();
-      document.removeEventListener('keydown', h);
-      startPart(1);
-    }
+// Start something by button click OR spacebar, and make sure it can only fire once.
+// (Otherwise a leftover spacebar listener would restart the part mid-test.)
+function onceSpaceOrClick(btn, fn){
+  let fired = false;
+  const go = () => {
+    if(fired) return;
+    fired = true;
+    document.removeEventListener('keydown', h);
+    fn();
   };
+  const h = e => { if(e.code === 'Space'){ e.preventDefault(); go(); } };
   document.addEventListener('keydown', h);
+  btn.addEventListener('click', go);
 }
 
 function startPart(part){
@@ -407,17 +528,10 @@ function showBreak(){
     <p style="margin-top:20px">When you are ready, press <kbd>spacebar</kbd>
        or click below to begin Part Two.</p>
     <div style="text-align:center;margin-top:28px">
-      <button class="btn" onclick="startPart(2)">Begin Part Two &rarr;</button>
+      <button class="btn" id="begin-btn">Begin Part Two &rarr;</button>
     </div>
   </div>`;
-  const h = e => {
-    if(e.code === 'Space'){
-      e.preventDefault();
-      document.removeEventListener('keydown', h);
-      startPart(2);
-    }
-  };
-  document.addEventListener('keydown', h);
+  onceSpaceOrClick($('begin-btn'), () => startPart(2));
 }
 
 /* ── Scoring + end ───────────────────────────── */
